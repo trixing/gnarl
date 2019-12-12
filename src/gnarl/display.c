@@ -29,6 +29,8 @@ static int command_time;  // seconds
 
 #define DISPLAY_TIMEOUT	5  // seconds
 
+// #define USE_DISPLAY 0
+
 static void format_time_ago(char *buf) {
 	int now = esp_timer_get_time() / 1000000;
 	int delta = now - command_time;
@@ -122,6 +124,7 @@ void display_update(display_op_t op, int arg) {
 }
 
 void display_init(void) {
+#ifdef USE_DISPLAY
 	oled_init();
 	display_queue = xQueueCreate(QUEUE_LENGTH, sizeof(display_command_t));
 	xTaskCreate(display_loop, "display", 2048, 0, 10, 0);
@@ -132,4 +135,5 @@ void display_init(void) {
 	gpio_set_intr_type(BUTTON, GPIO_INTR_NEGEDGE);
 	gpio_isr_handler_add(BUTTON, button_interrupt, 0);
 	gpio_intr_enable(BUTTON);
+#endif
 }
