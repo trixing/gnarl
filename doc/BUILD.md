@@ -9,6 +9,8 @@
 
 ## 3D Print Case
 
+The models are without the email address below.
+
  - [Case](/doc/case.stl)
  - [Lid](/doc/lid.stl)
 
