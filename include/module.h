@@ -3,6 +3,7 @@
 #define BUTTON		GPIO_NUM_0
 #define LED		GPIO_NUM_2
 
+// Comment out the following line for a TTGO ESP LoRa v1 module w/o OLED
 #define OLED_ENABLE
 #define OLED_SDA	GPIO_NUM_4
 #define OLED_SCL	GPIO_NUM_15
