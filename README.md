@@ -13,7 +13,9 @@ and may be subject to rebasing without notice.
 This project has been developed and tested on
 a TTGO ESP32 868/915 MHz LoRa OLED module *(version 1 only, see below!),*
 which contains an ESP32 SoC, an RFM95 LoRa radio,
-a 128x64 pixel SSD1306 OLED display, and a LiPo battery charger.
+a 128x64 pixel SSD1306 OLED display, and a LiPo battery charger. The
+version without OLED display is supported as well (see below in Software
+setup).
 
 The module has two push-buttons.
 One is hard-wired to reset the board;
@@ -79,6 +81,13 @@ git submodule status --recursive
 1. [Follow these instructions to install the ESP-IDF development environment.](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html#installation-step-by-step)
 
 1. Build and flash one of the example applications to make sure you have a working setup.
+
+## Disable OLED support if necessary
+
+OLED use is defined in`include/module.h` and must be commented out if no OLED is available.
+Just add two slashes in front of the statement.
+
+	// #define OLED_MODULE
 
 ## Building GNARL
 
