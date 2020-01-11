@@ -117,10 +117,12 @@ static void button_interrupt() {
 }
 
 void display_update(display_op_t op, int arg) {
+#ifdef USE_DISPLAY
 	display_command_t cmd = { .op = op, .arg = arg };
 	if (!xQueueSend(display_queue, &cmd, 0)) {
 		ESP_LOGE(TAG, "display_update: queue full");
 	}
+#endif
 }
 
 void display_init(void) {
