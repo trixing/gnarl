@@ -45,6 +45,8 @@ if anyone pursues that, please let me know.
 
 ## Hardware Setup
 
+An example complete build including case is documented [here](/doc/README.md).
+
 ### Antenna
 
 Attach an appropriate antenna to the U.FL connector on the module
