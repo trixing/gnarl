@@ -87,7 +87,7 @@ git submodule status --recursive
 OLED use is defined in`include/module.h` and must be commented out if no OLED is available.
 Just add two slashes in front of the statement.
 
-	// #define OLED_MODULE
+	// #define OLED_ENABLE
 
 ## Building GNARL
 
