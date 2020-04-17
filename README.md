@@ -97,6 +97,12 @@ Just add two slashes in front of the statement.
 
 ## Building GNARL
 
+1. . ../esp-idf/export.sh
+
+1. ulimit -S -n 150000
+
+1. sudo sysctl -w kern.maxfiles=200000 kern.maxfilesperproc=180000
+
 1. Type `make` in the top level of this repository.
 
 1. Change to the `project` subdirectory.
@@ -107,6 +113,8 @@ Just add two slashes in front of the statement.
 1. Build the project by running `idf.py build`
 
 1. Flash the project to your ESP32 module by running `idf.py flash`
+
+
 
 ## Running GNARL
 
