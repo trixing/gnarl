@@ -33,9 +33,12 @@ typedef struct {
 	uint8_t data[MAX_PARAM_LEN + MAX_PACKET_LEN];
 } rfspy_request_t;
 
-#define QUEUE_LENGTH		10
+#define QUEUE_LENGTH		20
 
 static QueueHandle_t request_queue;
+
+static volatile TaskHandle_t gnarl_loop_handle = NULL;
+
 
 typedef struct __attribute__((packed)) {
 	uint8_t listen_channel;
@@ -65,6 +68,19 @@ typedef struct __attribute__((packed)) {
 	uint8_t packet_count;
 	uint8_t packet[MAX_PACKET_LEN];
 } response_packet_t;
+
+typedef struct __attribute__((packed)) {
+	uint32_t uptime;
+	uint16_t rx_overflow;
+	uint16_t rx_fifo_overflow;
+	uint16_t packet_rx_count;
+	uint16_t packet_tx_count;
+	uint16_t crc_failure_count;
+	uint16_t spi_sync_failure_count;
+	uint16_t placeholder0;
+	uint16_t placeholder1;
+} statistics_cmd_t;
+static statistics_cmd_t statistics;
 
 static response_packet_t rx_buf;
 
@@ -152,13 +168,25 @@ static void rx_common(int n, int rssi) {
 	send_bytes((uint8_t *)&rx_buf, 2 + n);
 }
 
+static volatile int in_get_packet = 0;
+
 static void get_packet(const uint8_t *buf, int len) {
 	get_packet_cmd_t *p = (get_packet_cmd_t *)buf;
 	reverse_four_bytes(&p->timeout_ms);
-	ESP_LOGD(TAG, "get_packet: listen_channel %d timeout_ms %d",
-		 p->listen_channel, p->timeout_ms);
-	int n = receive(rx_buf.packet, sizeof(rx_buf.packet), p->timeout_ms);
+	// IdleListening enqueues packets with 4 minutes timeout
+	// which are not interruptible.
+	int timeout = p->timeout_ms;
+	/*
+	if (timeout > 1000) {
+        		timeout = 1000;
+	}
+	*/
+	ESP_LOGD(TAG, "get_packet: listen_channel %d timeout_ms %d limited to %d",
+		 p->listen_channel, p->timeout_ms, timeout);
+	in_get_packet = 1;
+	int n = receive(rx_buf.packet, sizeof(rx_buf.packet), timeout);
 	rx_common(n, read_rssi());
+	in_get_packet = 0;
 }
 
 static void send_packet(const uint8_t *buf, int len) {
@@ -263,6 +291,21 @@ static void set_sw_encoding(const uint8_t *buf, int len) {
 	send_code(RESPONSE_CODE_SUCCESS);
 }
 
+static void send_stats() {
+	statistics.uptime = xTaskGetTickCount();
+	ESP_LOGD(TAG, "send_stats len %d uptime %d rx %d tx %d", sizeof(statistics), statistics.uptime, statistics.packet_rx_count, statistics.packet_tx_count);
+
+	reverse_four_bytes(&statistics.uptime);
+        // from rfm95
+        statistics.packet_rx_count = rx_packet_count();
+	reverse_two_bytes(&statistics.packet_rx_count);
+        statistics.packet_tx_count = tx_packet_count();
+	reverse_two_bytes(&statistics.packet_tx_count);
+
+	send_bytes((const uint8_t *)&statistics, sizeof(statistics));
+}
+
+// This is called from the ble task
 void rfspy_command(const uint8_t *buf, int count, int rssi) {
 	if (count == 0) {
 		ESP_LOGE(TAG, "rfspy_command: count == 0");
@@ -273,11 +316,25 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 		return;
 	}
 	rfspy_cmd_t cmd = buf[1];
+	/*
 	// Special case: handle register upates immediately so they don't fill up the queue.
 	if (cmd == CmdUpdateRegister) {
 		ESP_LOGI(TAG, "CmdUpdateRegister");
 		update_register(buf + 2, count - 2);
 		return;
+	}
+	*/
+	if ((cmd == CmdGetPacket) && in_get_packet) {
+		ESP_LOGI(TAG, "CmdGetPacket while GetPacket is active, ignoring.");
+		return;
+	}
+	// Do this before enqueueing, otherwise there is a risk of self-inflicting
+	// the notification due to concurrency.
+	if (uxQueueMessagesWaiting(request_queue) > 0) {
+		if (in_get_packet) {
+			ESP_LOGD(TAG, "rfspy_command sending notify give.");
+			xTaskNotifyGive(gnarl_loop_handle);
+		}
 	}
 	rfspy_request_t req = {
 		.command = cmd,
@@ -286,7 +343,8 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 	};
 	memcpy(req.data, buf + 2, req.length);
 	if (!xQueueSend(request_queue, &req, 0)) {
-		ESP_LOGE(TAG, "rfspy_command: cannot queue request for command %d", cmd);
+		ESP_LOGD(TAG, "rfspy_command: cannot queue request for command %d, queue length %d", cmd, uxQueueMessagesWaiting(request_queue));
+		statistics.rx_fifo_overflow += 1;
 		return;
 	}
 	ESP_LOGD(TAG, "rfspy_command %d, queue length %d", cmd, uxQueueMessagesWaiting(request_queue));
@@ -338,10 +396,15 @@ static void gnarl_loop() {
 			ESP_LOGI(TAG, "CmdResetRadioConfig");
 			send_code(RESPONSE_CODE_SUCCESS);
 			break;
+		case CmdGetStatistics:
+			ESP_LOGI(TAG, "CmdGetStatistics");
+			send_stats();
+			break;
 		default:
 			ESP_LOGE(TAG, "unimplemented rfspy command %d", req.command);
 			break;
 		}
+		usleep(1);
 		display_update(PHONE_RSSI, req.rssi);
 		display_update(COMMAND_TIME, esp_timer_get_time()/SECONDS);
 	}
@@ -350,5 +413,5 @@ static void gnarl_loop() {
 void start_gnarl_task() {
 	request_queue = xQueueCreate(QUEUE_LENGTH, sizeof(rfspy_request_t));
 	// Start radio task with high priority to avoid receiving truncated packets.
-	xTaskCreate(gnarl_loop, "gnarl", 4096, 0, tskIDLE_PRIORITY + 24, 0);
+	xTaskCreate(gnarl_loop, "gnarl", 4096, 0, tskIDLE_PRIORITY + 24, &gnarl_loop_handle);
 }

@@ -306,6 +306,7 @@ int sleep_receive(uint8_t *buf, int count, int timeout) {
 #define POLL_INTERVAL	5  // milliseconds
 
 static void wait_until_interrupt(int timeout) {
+	ESP_LOGD(TAG, "waiting until interrupt by polling");
 	while (!packet_seen() && timeout > 0) {
 		int t = timeout < POLL_INTERVAL ? timeout : POLL_INTERVAL;
 		usleep(t * MILLISECONDS);

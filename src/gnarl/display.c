@@ -11,9 +11,9 @@
 
 #include "display.h"
 #include "module.h"
+#ifdef OLED_ENABLE
 #include "oled.h"
 
-#ifdef OLED_ENABLE
 typedef struct {
 	display_op_t op;
 	int arg;
@@ -114,19 +114,15 @@ static void button_interrupt() {
 	display_command_t cmd = { .op = SHOW_STATUS };
 	xQueueSendFromISR(display_queue, &cmd, 0);
 }
-#endif
 
 void display_update(display_op_t op, int arg) {
-#ifdef OLED_ENABLE
 	display_command_t cmd = { .op = op, .arg = arg };
 	if (!xQueueSend(display_queue, &cmd, 0)) {
 		ESP_LOGE(TAG, "display_update: queue full");
 	}
-#endif
 }
 
 void display_init(void) {
-#ifdef OLED_ENABLE
 	oled_init();
 	display_queue = xQueueCreate(QUEUE_LENGTH, sizeof(display_command_t));
 	xTaskCreate(display_loop, "display", 2048, 0, 10, 0);
@@ -137,7 +133,9 @@ void display_init(void) {
 	gpio_set_intr_type(BUTTON, GPIO_INTR_NEGEDGE);
 	gpio_isr_handler_add(BUTTON, button_interrupt, 0);
 	gpio_intr_enable(BUTTON);
+}
 #else
 	#warning OLED Display is disabled
+void display_update(display_op_t op, int arg) {}
+void display_init(void) {}
 #endif
-}

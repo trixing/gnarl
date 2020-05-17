@@ -242,8 +242,14 @@ static void response_notify() {
 		ESP_LOGD(TAG, "not notifying for response count %d", response_count);
 		return;
 	}
+	ESP_LOGD(TAG, "response_notify 1: %d", sizeof(response_count));
 	struct os_mbuf *om = ble_hs_mbuf_from_flat(&response_count, sizeof(response_count));
+	ESP_LOGD(TAG, "response_notify 2");
+	if (!om) {
+		ESP_LOGD(TAG, "response_notify 2 - om is NULL");
+	}
 	int err = ble_gattc_notify_custom(connection_handle, response_count_notify_handle, om);
+	ESP_LOGD(TAG, "response_notify 3: error code %d", err);
 	assert(!err);
 	ESP_LOGD(TAG, "notify for response count %d", response_count);
 }
