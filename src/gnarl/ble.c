@@ -9,6 +9,7 @@
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
 #include <nvs_flash.h>
+#include <nvs.h>
 #include <services/gap/ble_svc_gap.h>
 #include <services/gatt/ble_svc_gatt.h>
 
@@ -16,6 +17,12 @@
 #include "display.h"
 
 #define MAX_DATA	150
+#define DEFAULT_NAME    "GNARO"
+
+#define CUSTOM_NAME_SIZE 30
+#define STORAGE_NAMESPACE "GNARL"
+
+static uint8_t custom_name[CUSTOM_NAME_SIZE];
 
 void ble_store_ram_init(void);
 
@@ -143,12 +150,16 @@ static void advertise() {
 	fields.name = (uint8_t *)name;
 	fields.name_len = strlen(name);
 	fields.name_is_complete = 1;
+	ESP_LOGD(TAG, "gap_device_name %d %s", fields.name_len, fields.name);
 
 	fields.uuids128 = &service_uuid;
 	fields.num_uuids128 = 1;
 	fields.uuids128_is_complete = 1;
 
 	int err = ble_gap_adv_set_fields(&fields);
+	if (err) {
+		ESP_LOGE(TAG, "ble_gap_adv_set_fields err %d", err);
+	}
 	assert(!err);
 
 	// Begin advertising.
@@ -182,7 +193,7 @@ static int handle_gap_event(struct ble_gap_event *e, void *arg) {
 	case BLE_GAP_EVENT_DISCONNECT:
 		connected = false;
 		display_update(CONNECTED, false);
-		ESP_LOGD(TAG, "disconnected");
+		ESP_LOGD(TAG, "disconnected, reason 0x%x", e->disconnect.reason);
 		advertise();
 		break;
 	case BLE_GAP_EVENT_ADV_COMPLETE:
@@ -242,14 +253,8 @@ static void response_notify() {
 		ESP_LOGD(TAG, "not notifying for response count %d", response_count);
 		return;
 	}
-	ESP_LOGD(TAG, "response_notify 1: %d", sizeof(response_count));
 	struct os_mbuf *om = ble_hs_mbuf_from_flat(&response_count, sizeof(response_count));
-	ESP_LOGD(TAG, "response_notify 2");
-	if (!om) {
-		ESP_LOGD(TAG, "response_notify 2 - om is NULL");
-	}
 	int err = ble_gattc_notify_custom(connection_handle, response_count_notify_handle, om);
-	ESP_LOGD(TAG, "response_notify 3: error code %d", err);
 	assert(!err);
 	ESP_LOGD(TAG, "notify for response count %d", response_count);
 }
@@ -319,23 +324,78 @@ static int data_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
 	return 0;
 }
 
-static uint8_t custom_name[30];
-static uint16_t custom_name_len;
+
+static void read_custom_name(void) {
+    ESP_LOGD(TAG, "read_custom_name from nvs");
+    nvs_handle my_handle;
+    esp_err_t err;
+
+    err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+    	ESP_LOGE(TAG, "read_custom_name nvs_open err %d", err);
+	return;
+    }
+    size_t required_size = CUSTOM_NAME_SIZE;
+    err = nvs_get_blob(my_handle, "custom_name", custom_name, &required_size);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+	strcpy((char *)custom_name, DEFAULT_NAME);
+	ESP_LOGD(TAG, "Set default custom name: %s", custom_name);
+    } else if (err != ESP_OK) {
+    	ESP_LOGE(TAG, "read_custom_name nvs_get_blob err %d", err);
+	return;
+    } else {
+	ESP_LOGD(TAG, "Read custom name success: %s", custom_name);
+    }
+
+    nvs_close(my_handle);
+}
+
+
+static void write_custom_name(void) {
+    ESP_LOGD(TAG, "write_custom_name to nvs");
+    nvs_handle my_handle;
+    esp_err_t err;
+
+    err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+    	ESP_LOGE(TAG, "write_custom_name nvs_open err %d", err);
+	return;
+    }
+
+    err = nvs_set_blob(my_handle, "custom_name", custom_name, CUSTOM_NAME_SIZE);
+    if (err != ESP_OK) {
+    	ESP_LOGE(TAG, "write_custom_name nvs_set_blob err %d", err);
+	return;
+    }
+
+    err = nvs_commit(my_handle);
+    if (err != ESP_OK) {
+    	ESP_LOGE(TAG, "write_custom_name nvs_commit err %d", err);
+	return;
+    }
+
+    nvs_close(my_handle);
+}
 
 static int custom_name_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	int err;
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &data_uuid.u) == 0);
+	uint16_t custom_name_len;
+	assert(ble_uuid_cmp(ctxt->chr->uuid, &custom_name_uuid.u) == 0);
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR:
-		print_bytes("custom_name_access: sending %d bytes:", custom_name, custom_name_len);
+		print_bytes("custom_name_access: sending %d bytes", custom_name, custom_name_len);
 		if (os_mbuf_append(ctxt->om, custom_name, custom_name_len) != 0) {
 			return BLE_ATT_ERR_INSUFFICIENT_RES;
 		}
 		return 0;
 	case BLE_GATT_ACCESS_OP_WRITE_CHR:
 		err = ble_hs_mbuf_to_flat(ctxt->om, custom_name, sizeof(custom_name), &custom_name_len);
+		custom_name[custom_name_len] = 0;
 		assert(!err);
-		print_bytes("custom_name_access: received %d bytes:", custom_name, custom_name_len);
+		print_bytes("custom_name_access: received %d bytes", custom_name, custom_name_len);
+		ESP_LOGD(TAG, "New custom name: %s", custom_name);
+		write_custom_name();
+		esp_restart();
 		return 0;
 	default:
 		assert(0);
@@ -358,7 +418,7 @@ static uint8_t led_mode;
 static int led_mode_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {
 	int err;
 	uint16_t n;
-	assert(ble_uuid_cmp(ctxt->chr->uuid, &data_uuid.u) == 0);
+	assert(ble_uuid_cmp(ctxt->chr->uuid, &led_mode_uuid.u) == 0);
 	switch (ctxt->op) {
 	case BLE_GATT_ACCESS_OP_READ_CHR:
 		ESP_LOGD(TAG, "led_mode_access: mode = %d", led_mode);
@@ -404,7 +464,10 @@ void gnarl_init() {
 
 	server_init();
 
-	int err = ble_svc_gap_device_name_set("GNARL");
+	read_custom_name();
+
+	// int err = ble_svc_gap_device_name_set((char *)custom_name);
+	int err = ble_svc_gap_device_name_set(DEFAULT_NAME);
 	assert(!err);
 
 	ble_store_ram_init();
