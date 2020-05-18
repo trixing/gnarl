@@ -2,6 +2,7 @@
 
 #include "version.h"
 
+#define TAG		"GNARL"
 #define LOG_LOCAL_LEVEL	ESP_LOG_DEBUG
 #include <esp_log.h>
 
@@ -11,8 +12,6 @@
 #define WDT_TIMEOUT_SECONDS (5*60)
 
 #define MHz		1000000
-
-#define TAG "GNARL"
 
 // Track github.com/ps2/rileylink/firmware/ble113_rfspy/gatt.xml
 #define BLE_RFSPY_VERSION  "ble_rfspy 2.0"

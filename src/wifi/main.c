@@ -1,21 +1,21 @@
 #include <stdio.h>
 
-#include <nvs_flash.h>
+#include <lwip/ip_addr.h>
+#include <lwip/netdb.h>
 
 #include "wifi.h"
 
-void app_main(void) {
-	esp_err_t ret = nvs_flash_init();
-	if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-		ESP_ERROR_CHECK(nvs_flash_erase());
-		ret = nvs_flash_init();
-	}
-	ESP_ERROR_CHECK(ret);
-
-	wifi_init();
-	char *ip_address = wifi_ip_address();
-	if (!ip_address) {
+static void lookup_host(const char *hostname) {
+	struct hostent *he = gethostbyname(hostname);
+	if (!he) {
+		printf("host %s not found\n", hostname);
 		return;
 	}
-	printf("IP address: %s\n", ip_address);
+	char *addr = ip4addr_ntoa((ip4_addr_t *)he->h_addr_list[0]);
+	printf("%s has address %s\n", hostname, addr);
+}
+
+void app_main(void) {
+	printf("IP address: %s\n", ip_address());
+	lookup_host("google.com");
 }

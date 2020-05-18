@@ -10,7 +10,7 @@
 
 #define PUMP_FREQUENCY 868600000
 
-void app_main() {
+void app_main(void) {
 	ESP_LOGD(TAG, "enable watchdag with a timeout of %d seconds", WDT_TIMEOUT_SECONDS);
 	esp_task_wdt_init(WDT_TIMEOUT_SECONDS, true);
 	ESP_LOGI(TAG, "%s", SUBG_RFSPY_VERSION);

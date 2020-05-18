@@ -12,9 +12,13 @@
 #include "rfm95.h"
 #include "spi.h"
 
-#define MILLISECONDS	1000
+#define MILLISECOND	1000
 
-static inline uint8_t read_mode() {
+// The FIFO_THRESHOLD value should allow a maximum-sized packet to be
+// written in two bursts, but be large enough to avoid fifo underflow.
+#define FIFO_THRESHOLD	20
+
+static inline uint8_t read_mode(void) {
 	return read_register(REG_OP_MODE) & OP_MODE_MASK;
 }
 
@@ -25,10 +29,10 @@ static void set_mode(uint8_t mode) {
 	if (mode == cur_mode) {
 		return;
 	}
-	ESP_LOGD(TAG, "set_mode %d -> %d", cur_mode, mode);
 	write_register(REG_OP_MODE, FSK_OOK_MODE | MODULATION_OOK | mode);
+	ESP_LOGD(TAG, "set_mode %d -> %d", cur_mode, mode);
 	if (cur_mode == MODE_SLEEP) {
-		usleep(500);
+		usleep(100);
 	}
 	for (int w = 0; w < MAX_WAIT; w++) {
 		cur_mode = read_mode();
@@ -39,57 +43,61 @@ static void set_mode(uint8_t mode) {
 	ESP_LOGI(TAG, "set_mode(%d) timeout in mode %d", mode, cur_mode);
 }
 
-static inline void set_mode_sleep() {
+static inline void set_mode_sleep(void) {
 	set_mode(MODE_SLEEP);
 }
 
-static inline void set_mode_standby() {
+static inline void set_mode_standby(void) {
 	set_mode(MODE_STDBY);
 }
 
-static inline void set_mode_receive() {
+static inline void set_mode_receive(void) {
 	set_mode(MODE_RX);
 }
 
-static inline void set_mode_transmit() {
+static inline void set_mode_transmit(void) {
 	set_mode(MODE_TX);
 }
 
-static inline void sequencer_stop() {
+static inline void sequencer_stop(void) {
 	write_register(REG_SEQ_CONFIG_1, SEQUENCER_STOP);
 }
 
-void rfm95_reset() {
+// Reset the radio device.  See section 7.2.2 of data sheet.
+// NOTE: the RFM95 requires the reset pin to be in input mode
+// except while resetting the chip, unlike the RFM69 for example.
+
+void rfm95_reset(void) {
 	ESP_LOGD(TAG, "reset");
 	gpio_set_direction(LORA_RST, GPIO_MODE_OUTPUT);
 	gpio_set_level(LORA_RST, 0);
 	usleep(100);
-	gpio_set_level(LORA_RST, 1);
-	usleep(5*MILLISECONDS);
+	gpio_set_direction(LORA_RST, GPIO_MODE_INPUT);
+	usleep(5*MILLISECOND);
 }
 
 static volatile int rx_packets;
 
-int rx_packet_count() {
+int rx_packet_count(void) {
 	return rx_packets;
 }
 
 static volatile int tx_packets;
 
-int tx_packet_count() {
+int tx_packet_count(void) {
 	return tx_packets;
 }
 
 static volatile TaskHandle_t rx_waiting_task;
 
-static void IRAM_ATTR rx_interrupt() {
+static void IRAM_ATTR rx_interrupt(void *unused) {
 	rx_packets++;
 	if (rx_waiting_task != 0) {
 		vTaskNotifyGiveFromISR(rx_waiting_task, 0);
 	}
 }
 
-void rfm95_init() {
+void rfm95_init(void) {
 	spi_init();
 	rfm95_reset();
 
@@ -131,23 +139,29 @@ void rfm95_init() {
 	write_register(REG_SYNC_VALUE_3, 0xFF);
 	write_register(REG_SYNC_VALUE_4, 0x00);
 
+	// Use unlimited length packet format (data sheet section 4.2.13.2).
 	write_register(REG_PACKET_CONFIG_1, PACKET_FORMAT_FIXED);
-	write_register(REG_PACKET_CONFIG_2, PACKET_MODE);
+	write_register(REG_PAYLOAD_LENGTH, 0);
+	write_register(REG_PACKET_CONFIG_2, PACKET_MODE| 0);
 }
 
-static inline bool fifo_empty() {
+static inline bool fifo_empty(void) {
 	return (read_register(REG_IRQ_FLAGS_2) & FIFO_EMPTY) != 0;
 }
 
-static inline bool fifo_full() {
+static inline bool fifo_full(void) {
 	return (read_register(REG_IRQ_FLAGS_2) & FIFO_FULL) != 0;
 }
 
-static inline void clear_fifo() {
+static inline bool fifo_threshold_exceeded(void) {
+	return (read_register(REG_IRQ_FLAGS_2) & FIFO_LEVEL) != 0;
+}
+
+static inline void clear_fifo(void) {
 	write_register(REG_IRQ_FLAGS_2, FIFO_OVERRUN);
 }
 
-static inline uint8_t read_fifo_flags() {
+static inline uint8_t read_fifo_flags(void) {
 	return read_register(REG_IRQ_FLAGS_2);
 }
 
@@ -159,7 +173,7 @@ static inline void xmit(uint8_t* data, int len) {
 	write_burst(REG_FIFO, data, len);
 }
 
-static bool wait_for_fifo_non_empty() {
+static bool wait_for_fifo_room(void) {
 	for (int w = 0; w < MAX_WAIT; w++) {
 		if (!fifo_full()) {
 			return true;
@@ -171,7 +185,7 @@ static bool wait_for_fifo_non_empty() {
 	return false;
 }
 
-static void wait_for_transmit_done() {
+static void wait_for_transmit_done(void) {
 	uint8_t mode;
 	for (int w = 0; w < MAX_WAIT; w++) {
 		mode = read_mode();
@@ -179,6 +193,7 @@ static void wait_for_transmit_done() {
 			ESP_LOGD(TAG, "transmit done; waits = %d", w);
 			return;
 		}
+		usleep(1*MILLISECOND);
 	}
 	sequencer_stop();
 	set_mode_sleep();
@@ -187,39 +202,44 @@ static void wait_for_transmit_done() {
 
 void transmit(uint8_t *buf, int count) {
 	ESP_LOGD(TAG, "transmit %d-byte packet", count);
-	set_mode_standby();
 	clear_fifo();
+	set_mode_standby();
 	// Automatically enter Transmit state on FifoLevel interrupt.
-	write_register(REG_FIFO_THRESH, TX_START_CONDITION);
-	write_register(REG_SEQ_CONFIG_1,
-		       SEQUENCER_START |
-		       IDLE_MODE_SLEEP |
-		       FROM_START_TO_TX_ON_FIFO_LEVEL |
-		       LOW_POWER_SELECT_OFF |
-		       FROM_TX_TO_LOW_POWER);
-	// Specify fixed length packet format (including final zero byte)
-	// so PacketSent interrupt will terminate Transmit state.
-	write_register(REG_PACKET_CONFIG_1, PACKET_FORMAT_FIXED);
-	uint8_t length_msb = ((count + 1) >> 8) & PAYLOAD_LENGTH_MSB_MASK;
-	write_register(REG_PACKET_CONFIG_2, PACKET_MODE | length_msb);
-	write_register(REG_PAYLOAD_LENGTH, (count + 1) & 0xFF);
-	int n = count < FIFO_SIZE ? count : FIFO_SIZE;
-	xmit(buf, n);
-	ESP_LOGD(TAG, "after xmit: mode = %d", read_mode());
-	while (n < count) {
-		if (!wait_for_fifo_non_empty()) return;
-		xmit_byte(buf[n]);
-		n++;
+	write_register(REG_FIFO_THRESH, TX_START_CONDITION | FIFO_THRESHOLD);
+	write_register(REG_SEQ_CONFIG_1, SEQUENCER_START | IDLE_MODE_STANDBY | FROM_START_TO_TX);
+	int avail = FIFO_SIZE;
+	for (;;) {
+		if (avail > count) {
+			avail = count;
+		}
+		ESP_LOGD(TAG, "writing %d bytes to TX FIFO", avail);
+		xmit(buf, avail);
+		ESP_LOGD(TAG, "after xmit: mode = %d", read_mode());
+		buf += avail;
+		count -= avail;
+		if (count == 0) {
+			break;
+		}
+		// Wait until there is room for at least fifoSize - fifoThreshold bytes in the FIFO.
+		// Err on the short side here to avoid TXFIFO underflow.
+		usleep(FIFO_SIZE / 4 * MILLISECOND);
+		for (;;) {
+			if (!fifo_threshold_exceeded()) {
+				avail = FIFO_SIZE - FIFO_THRESHOLD;
+				break;
+			}
+		}
 	}
-	if (!wait_for_fifo_non_empty()) return;
+	if (!wait_for_fifo_room()) {
+		return;
+	}
 	xmit_byte(0);
-	// Rely on the sequencer to end Transmit mode after PacketSent is triggered.
 	wait_for_transmit_done();
-	set_mode_sleep();
+	set_mode_standby();
 	tx_packets++;
 }
 
-static bool packet_seen() {
+static bool packet_seen(void) {
 	bool seen = (read_register(REG_IRQ_FLAGS_1) & SYNC_ADDRESS_MATCH) != 0;
 	if (seen) {
 		ESP_LOGD(TAG, "incoming packet seen");
@@ -227,13 +247,13 @@ static bool packet_seen() {
 	return seen;
 }
 
-static inline uint8_t recv_byte() {
+static inline uint8_t recv_byte(void) {
 	return read_register(REG_FIFO);
 }
 
 static uint8_t last_rssi = 0xFF;
 
-int read_rssi() {
+int read_rssi(void) {
 	return -(int)last_rssi / 2;
 }
 
@@ -243,6 +263,7 @@ static int rx_common(wait_fn_t wait_fn, uint8_t *buf, int count, int timeout) {
 	// Use unlimited length packet format (data sheet section 4.2.13.2).
 	write_register(REG_PACKET_CONFIG_1, PACKET_FORMAT_FIXED);
 	write_register(REG_PAYLOAD_LENGTH, 0);
+	write_register(REG_PACKET_CONFIG_2, PACKET_MODE| 0);
 	gpio_intr_enable(DIO2);
 	ESP_LOGD(TAG, "starting receive");
 	set_mode_receive();
@@ -291,7 +312,7 @@ static int rx_common(wait_fn_t wait_fn, uint8_t *buf, int count, int timeout) {
 
 static void sleep_until_interrupt(int timeout) {
 	uart_tx_wait_idle(0);
-	uint64_t us = (uint64_t)timeout * MILLISECONDS;
+	uint64_t us = (uint64_t)timeout * MILLISECOND;
 	esp_sleep_enable_timer_wakeup(us);
 	esp_light_sleep_start();
 	esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
@@ -309,7 +330,7 @@ static void wait_until_interrupt(int timeout) {
 	ESP_LOGD(TAG, "waiting until interrupt by polling");
 	while (!packet_seen() && timeout > 0) {
 		int t = timeout < POLL_INTERVAL ? timeout : POLL_INTERVAL;
-		usleep(t * MILLISECONDS);
+		usleep(t * MILLISECOND);
 		timeout -= t;
 	}
 }
@@ -332,7 +353,7 @@ int receive(uint8_t *buf, int count, int timeout) {
 	return rx_common(wait_until_interrupt, buf, count, timeout);
 }
 
-uint32_t read_frequency() {
+uint32_t read_frequency(void) {
 	uint8_t frf[3];
 	read_burst(REG_FRF_MSB, frf, sizeof(frf));
 	uint32_t f = (frf[0] << 16) | (frf[1] << 8) | frf[2];
@@ -348,7 +369,7 @@ void set_frequency(uint32_t freq_hz) {
 	write_burst(REG_FRF_MSB, frf, sizeof(frf));
 }
 
-int read_version() {
+int read_version(void) {
 	return read_register(REG_VERSION);
 }
 
