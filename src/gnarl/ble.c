@@ -17,7 +17,7 @@
 #include "display.h"
 
 #define MAX_DATA	150
-#define DEFAULT_NAME    "GNARO"
+#define DEFAULT_NAME    "GNARL"
 
 #define CUSTOM_NAME_SIZE 30
 #define STORAGE_NAMESPACE "GNARL"
@@ -138,8 +138,10 @@ static void server_init(void) {
 }
 
 static void advertise(void) {
-	struct ble_hs_adv_fields fields;
+	struct ble_hs_adv_fields fields, fields_ext;
+	char short_name[8];
 	memset(&fields, 0, sizeof(fields));
+	memset(&fields_name, 0, sizeof(fields_name));
 
 	fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
@@ -147,9 +149,18 @@ static void advertise(void) {
 	fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
 
 	const char *name = ble_svc_gap_device_name();
-	fields.name = (uint8_t *)name;
-	fields.name_len = strlen(name);
-	fields.name_is_complete = 1;
+	strncpy(short_name, name, 8);
+	short_name[5] = 0;
+	name_len = strlen(name);
+	fields.name = (uint8_t *)short_name;
+	fields.name_len = strlen(short_name);
+	if (name_len <= 5) {
+		fields.name_is_complete = 1;
+	} else {
+		fields.name_is_complete = 0;
+		ESP_LOGD(TAG, "device name shortened to %s", short_name);
+	}
+
 	ESP_LOGD(TAG, "gap_device_name %d %s", fields.name_len, fields.name);
 
 	fields.uuids128 = &service_uuid;
@@ -161,6 +172,19 @@ static void advertise(void) {
 		ESP_LOGE(TAG, "ble_gap_adv_set_fields err %d", err);
 	}
 	assert(!err);
+
+	if (!fields.name_is_complete) {
+		// Not sure if we have to set the flags again.
+		fields_ext.flags = fields.flags;
+		fields_ext.name = (uint8_t *)name;
+		fields_ext.name_len = strlen(name);
+		fields_ext.name_is_complete = 1;
+		int err = ble_gap_adv_set_fields(&fields_name);
+		if (err) {
+			ESP_LOGE(TAG, "ble_gap_adv_set_fields fields_name err %d", err);
+		}
+		assert(!err);
+	}
 
 	// Begin advertising.
 	struct ble_gap_adv_params adv;
@@ -461,8 +485,7 @@ void gnarl_init(void) {
 
 	read_custom_name();
 
-	// int err = ble_svc_gap_device_name_set((char *)custom_name);
-	int err = ble_svc_gap_device_name_set(DEFAULT_NAME);
+	int err = ble_svc_gap_device_name_set((char *)custom_name);
 	assert(!err);
 
 	ble_store_ram_init();
