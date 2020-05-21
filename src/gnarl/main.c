@@ -8,7 +8,7 @@
 #include "display.h"
 #include "rfm95.h"
 
-#define PUMP_FREQUENCY 916600000
+#define PUMP_FREQUENCY 868600000
 
 void app_main(void) {
 	ESP_LOGD(TAG, "enable watchdag with a timeout of %d seconds", WDT_TIMEOUT_SECONDS);
