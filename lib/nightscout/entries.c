@@ -1,8 +1,9 @@
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
-#define TAG		"Nightscout"
+#define TAG		"NS"
 
 #include <esp_log.h>
 
@@ -70,8 +71,5 @@ void process_nightscout_entries(const char *json, nightscout_entry_callback_t ca
 }
 
 void print_nightscout_entry(const nightscout_entry_t *e) {
-	struct tm *tm = localtime(&e->tv.tv_sec);
-	static char buf[20];
-	strftime(buf, sizeof(buf), "%F %T", tm);
-	printf("%s  %3d\n", buf, e->sgv);
+	printf("%s  %3d\n", nightscout_time_string(e->tv.tv_sec), e->sgv);
 }

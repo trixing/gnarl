@@ -8,6 +8,7 @@
 #include <host/util/util.h>
 #include <nimble/nimble_port.h>
 #include <nimble/nimble_port_freertos.h>
+#include <nvs.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <services/gap/ble_svc_gap.h>
@@ -16,11 +17,11 @@
 #include "commands.h"
 #include "display.h"
 
-#define MAX_DATA	150
-#define DEFAULT_NAME    "GNARL"
+#define MAX_DATA		150
+#define DEFAULT_NAME		"GNARL"
 
-#define CUSTOM_NAME_SIZE 30
-#define STORAGE_NAMESPACE "GNARL"
+#define CUSTOM_NAME_SIZE	30
+#define STORAGE_NAMESPACE	"GNARL"
 
 static uint8_t custom_name[CUSTOM_NAME_SIZE];
 
@@ -350,57 +351,55 @@ static int data_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_ga
 	return 0;
 }
 
-
 static void read_custom_name(void) {
-    ESP_LOGD(TAG, "read_custom_name from nvs");
-    nvs_handle my_handle;
-    esp_err_t err;
+	ESP_LOGD(TAG, "read_custom_name from nvs");
+	nvs_handle my_handle;
+	esp_err_t err;
 
-    err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
-    if (err != ESP_OK) {
-    	ESP_LOGE(TAG, "read_custom_name nvs_open err %d", err);
-	return;
-    }
-    size_t required_size = CUSTOM_NAME_SIZE;
-    err = nvs_get_blob(my_handle, "custom_name", custom_name, &required_size);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-	strcpy((char *)custom_name, DEFAULT_NAME);
-	ESP_LOGD(TAG, "Set default custom name: %s", custom_name);
-    } else if (err != ESP_OK) {
-    	ESP_LOGE(TAG, "read_custom_name nvs_get_blob err %d", err);
-	return;
-    } else {
-	ESP_LOGD(TAG, "Read custom name success: %s", custom_name);
-    }
+	err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "read_custom_name nvs_open err %d", err);
+		return;
+	}
+	size_t required_size = CUSTOM_NAME_SIZE;
+	err = nvs_get_blob(my_handle, "custom_name", custom_name, &required_size);
+	if (err == ESP_ERR_NVS_NOT_FOUND) {
+		strcpy((char *)custom_name, DEFAULT_NAME);
+		ESP_LOGD(TAG, "Set default custom name: %s", custom_name);
+	} else if (err != ESP_OK) {
+		ESP_LOGE(TAG, "read_custom_name nvs_get_blob err %d", err);
+		return;
+	} else {
+		ESP_LOGD(TAG, "Read custom name success: %s", custom_name);
+	}
 
-    nvs_close(my_handle);
+	nvs_close(my_handle);
 }
 
-
 static void write_custom_name(void) {
-    ESP_LOGD(TAG, "write_custom_name to nvs");
-    nvs_handle my_handle;
-    esp_err_t err;
+	ESP_LOGD(TAG, "write_custom_name to nvs");
+	nvs_handle my_handle;
+	esp_err_t err;
 
-    err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
-    if (err != ESP_OK) {
-    	ESP_LOGE(TAG, "write_custom_name nvs_open err %d", err);
-	return;
-    }
+	err = nvs_open(STORAGE_NAMESPACE, NVS_READWRITE, &my_handle);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "write_custom_name nvs_open err %d", err);
+		return;
+	}
 
-    err = nvs_set_blob(my_handle, "custom_name", custom_name, CUSTOM_NAME_SIZE);
-    if (err != ESP_OK) {
-    	ESP_LOGE(TAG, "write_custom_name nvs_set_blob err %d", err);
-	return;
-    }
+	err = nvs_set_blob(my_handle, "custom_name", custom_name, CUSTOM_NAME_SIZE);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "write_custom_name nvs_set_blob err %d", err);
+		return;
+	}
 
-    err = nvs_commit(my_handle);
-    if (err != ESP_OK) {
-    	ESP_LOGE(TAG, "write_custom_name nvs_commit err %d", err);
-	return;
-    }
+	err = nvs_commit(my_handle);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "write_custom_name nvs_commit err %d", err);
+		return;
+	}
 
-    nvs_close(my_handle);
+	nvs_close(my_handle);
 }
 
 static int custom_name_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg) {

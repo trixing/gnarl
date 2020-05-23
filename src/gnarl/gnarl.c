@@ -122,7 +122,7 @@ static void send(uint8_t *data, int len, int repeat_count, int delay_ms) {
 	print_bytes("TX: sending %d bytes:", data, len);
 	transmit(data, len);
 	while (repeat_count > 0) {
-		usleep(delay_ms  *MILLISECONDS);
+		usleep(delay_ms * MILLISECONDS);
 		transmit(data, len);
 		repeat_count--;
 	}
@@ -347,7 +347,7 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 
 static void gnarl_loop(void *unused) {
 	ESP_LOGD(TAG, "starting gnarl_loop");
-	esp_task_wdt_add(NULL);
+	esp_task_wdt_add(0);
 	const int timeout_ms = 60*MILLISECONDS;
 	for (;;) {
 		rfspy_request_t req;

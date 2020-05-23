@@ -1,10 +1,11 @@
 #define TAG		"BNEP"
-#define LOG_LOCAL_LEVEL	ESP_LOG_DEBUG
+#define LOG_LOCAL_LEVEL	ESP_LOG_INFO
 #include <esp_log.h>
 
 #include <btstack_config.h>
 #include <btstack.h>
 #include <btstack_run_loop_freertos.h>
+#include <btstack_port_esp32.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <lwip/dhcp.h>
@@ -14,7 +15,9 @@
 #include <lwip/tcpip.h>
 #include <netif/ethernet.h>
 
-#include "tether_config.h"
+#include "network_config.h"
+
+extern volatile int bnep_failure;
 
 static struct netif bnep_netif;
 
@@ -108,19 +111,20 @@ void handle_bnep_packet(uint8_t packet_type, uint16_t channel, uint8_t *packet, 
         case HCI_EVENT_PACKET:
 		switch (hci_event_packet_get_type(packet)) {
                 case BNEP_EVENT_CHANNEL_OPENED:
-			if (bnep_event_channel_opened_get_status(packet) != 0)
+			if (bnep_event_channel_opened_get_status(packet) != 0) {
 				break;
+			}
 			bnep_cid = bnep_event_channel_opened_get_bnep_cid(packet);
-			ESP_LOGD(TAG, "BNEP channel opened: CID = %x", bnep_cid);
 			gap_local_bd_addr(local_addr);
 			netif_link_up(local_addr);
+			ESP_LOGD(TAG, "BNEP channel opened: CID = %x", bnep_cid);
 			break;
-
                 case BNEP_EVENT_CHANNEL_CLOSED:
-			ESP_LOGD(TAG, "BNEP channel closed");
+			bnep_failure = 1;
 			bnep_cid = 0;
 			discard_packets();
 			netif_link_down();
+			ESP_LOGD(TAG, "BNEP channel closed");
 			break;
                 case BNEP_EVENT_CAN_SEND_NOW:
 			send_next_packet();
@@ -209,27 +213,36 @@ static void status_callback(struct netif *netif) {
 	have_ip_address = 1;
 }
 
-static void wait_for_dhcp(void) {
+#define WAIT_INTERVAL	100	// milliseconds
+#define MAX_BNEP_WAITS	3000	// 5 minutes
+#define MAX_DHCP_WAITS	1200	// 2 minutes
+
+static int wait_for_dhcp(void) {
 	int n = 0;
-	while (!have_ip_address) {
+	while (!dhcp_started && !bnep_failure && n < MAX_BNEP_WAITS) {
 		link_callback(&bnep_netif);
+		if (n++ % 50 == 0) {
+			ESP_LOGD(TAG, "waiting for BNEP connection");
+		}
+		vTaskDelay(pdMS_TO_TICKS(WAIT_INTERVAL));
+	}
+	if (n == MAX_BNEP_WAITS) {
+		ESP_LOGE(TAG, "timeout waiting for BNEP connection");
+		return -1;
+	}
+	n = 0;
+	while (!have_ip_address && !bnep_failure && n < MAX_DHCP_WAITS) {
 		status_callback(&bnep_netif);
-		if (n++ % 10 == 0) {
+		if (n++ % 50 == 0) {
 			ESP_LOGD(TAG, "waiting for IP address");
 		}
-		vTaskDelay(pdMS_TO_TICKS(250));
+		vTaskDelay(pdMS_TO_TICKS(WAIT_INTERVAL));
 	}
-}
-
-void app_main_with_tethering(void);
-
-static void main_loop(void *unused) {
-	wait_for_dhcp();
-	ESP_LOGI(TAG, "IP address: %s", ip_address());
-	ESP_LOGI(TAG, "Gateway:    %s", gateway_address());
-	app_main_with_tethering();
-	ESP_LOGD(TAG, "Return from main application function");
-	vTaskDelete(0);
+	if (n == MAX_DHCP_WAITS) {
+		ESP_LOGE(TAG, "timeout waiting for IP address");
+		return -1;
+	}
+	return have_ip_address ? 0 : -1;
 }
 
 extern bd_addr_t bt_tether_addr;
@@ -240,21 +253,31 @@ void handle_hci_startup_packet(uint8_t packet_type, uint16_t channel, uint8_t *p
 #define SERVICE_CLASS_NETWORKING	(1 << 17)
 #define DEVICE_CLASS_LAN_NAP		(3 << 8)
 
-void btstack_main() {
-	static btstack_packet_callback_registration_t hci_callback = {
-		.callback = handle_hci_startup_packet,
-	};
+static void bt_loop(void *unused) {
+	btstack_init();
 	// Parse human-readable Bluetooth address.
 	sscanf_bd_addr(TETHER_ADDRESS, bt_tether_addr);
 	gap_discoverable_control(1);
 	gap_ssp_set_io_capability(SSP_IO_CAPABILITY_DISPLAY_YES_NO);
 	gap_set_local_name("ESP32 PAN Client");
 	gap_set_class_of_device(SERVICE_CLASS_NETWORKING | DEVICE_CLASS_LAN_NAP);
-	hci_add_event_handler(&hci_callback);
 	l2cap_init();
-	bnep_init();
 	sdp_init();
+	bnep_init();
 	bnep_interface_init();
+	static btstack_packet_callback_registration_t hci_callback = {
+		.callback = handle_hci_startup_packet,
+	};
+	hci_add_event_handler(&hci_callback);
 	hci_power_control(HCI_POWER_ON);
-	xTaskCreate(main_loop, "main", 4096, 0, tskIDLE_PRIORITY + 16, 0);
+	btstack_run_loop_execute();
+}
+
+int tether_init(void) {
+	xTaskCreate(bt_loop, "bt_loop", 4096, 0, ESP_TASK_BT_CONTROLLER_PRIO, 0);
+	return wait_for_dhcp();
+}
+
+void tether_off(void) {
+	bnep_disconnect(bt_tether_addr);
 }

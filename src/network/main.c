@@ -2,7 +2,7 @@
 #include <lwip/ip_addr.h>
 #include <lwip/netdb.h>
 
-#include "tether.h"
+#include "network.h"
 
 static void lookup_host(const char *hostname) {
 	struct hostent *he = gethostbyname(hostname);
@@ -48,6 +48,7 @@ static char *http_get(const char *url) {
 }
 
 void app_main(void) {
+	ESP_ERROR_CHECK(network_init());
 	printf("IP address: %s\n", ip_address());
 	printf("Gateway:    %s\n", gateway_address());
 	lookup_host("google.com");

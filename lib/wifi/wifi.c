@@ -8,11 +8,11 @@
 #include <freertos/task.h>
 #include <nvs_flash.h>
 
-#include "wifi_config.h"
+#include "network_config.h"
 
 #define MAX_RETRIES  		5
-#define RETRY_INTERVAL		100	// milliseconds
-#define IP_TIMEOUT		10000	// milliseconds
+#define RETRY_INTERVAL		500	// milliseconds
+#define IP_TIMEOUT		30000	// milliseconds
 
 static esp_netif_t *wifi_interface;
 static int retry_num;
@@ -59,7 +59,7 @@ static void handle_ip_event(void* arg, esp_event_base_t event_base, int32_t even
 	}
 }
 
-static void wifi_init(void) {
+int wifi_init(void) {
 	ESP_ERROR_CHECK(nvs_flash_init());
 	ESP_ERROR_CHECK(esp_netif_init());
 
@@ -85,22 +85,25 @@ static void wifi_init(void) {
 	waiting_task = xTaskGetCurrentTaskHandle();
 	if (!xTaskNotifyWait(0, 0, 0, pdMS_TO_TICKS(IP_TIMEOUT))) {
 		ESP_LOGE(TAG, "timeout waiting for IP address");
+		return -1;
 	}
+	return 0;
 }
 
+void wifi_off(void) {
+}
+
+static char addr[20];
+static esp_netif_ip_info_t ip_info;
+
 char *ip_address(void) {
-	static char addr[20];
-	esp_netif_ip_info_t ip_info;
 	ESP_ERROR_CHECK(esp_netif_get_ip_info(wifi_interface, &ip_info));
 	esp_ip4addr_ntoa(&ip_info.ip, addr, sizeof(addr));
 	return addr;
 }
 
-void app_main_with_wifi(void);
-
-void app_main(void) {
-	wifi_init();
-	ESP_LOGI(TAG, "IP address: %s", ip_address());
-	app_main_with_wifi();
-	ESP_LOGD(TAG, "Return from main application function");
+char *gateway_address(void) {
+	ESP_ERROR_CHECK(esp_netif_get_ip_info(wifi_interface, &ip_info));
+	esp_ip4addr_ntoa(&ip_info.gw, addr, sizeof(addr));
+	return addr;
 }

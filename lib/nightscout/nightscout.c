@@ -1,3 +1,7 @@
+#define TAG		"NS"
+#define LOG_LOCAL_LEVEL	ESP_LOG_DEBUG
+#include <esp_log.h>
+
 #include "nightscout.h"
 #include "nightscout_config.h"
 
@@ -13,10 +17,15 @@
 
 extern const char root_cert_pem_start[] asm("_binary_root_cert_pem_start");
 
+esp_err_t http_header_callback(esp_http_client_event_t *e);
+
 esp_http_client_handle_t nightscout_client_handle(void) {
 	esp_http_client_config_t config = {
 		.url = NIGHTSCOUT_URL,
+		.timeout_ms = 10000,
 		.cert_pem = root_cert_pem_start,
+		.event_handler = http_header_callback,
 	};
+	ESP_LOGI(TAG, "Nightscout URL: %s", config.url);
 	return esp_http_client_init(&config);
 }
