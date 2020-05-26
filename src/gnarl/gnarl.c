@@ -13,6 +13,7 @@
 #include "4b6b.h"
 #include "commands.h"
 #include "display.h"
+#include "voltage.h"
 #include "rfm95.h"
 
 #define MAX_PARAM_LEN	16
@@ -283,19 +284,28 @@ static void set_sw_encoding(const uint8_t *buf, int len) {
 	send_code(RESPONSE_CODE_SUCCESS);
 }
 
+static int vusb, vbat;
 static void send_stats() {
 	statistics.uptime = xTaskGetTickCount();
 	// from rfm95
 	statistics.packet_rx_count = rx_packet_count();
 	statistics.packet_tx_count = tx_packet_count();
 
-	ESP_LOGD(TAG, "send_stats len %d uptime %d rx %d tx %d",
+	vusb = voltage_usb();
+	statistics.placeholder0 = vusb;
+	vbat = voltage_bat();
+	statistics.placeholder1 = vbat;
+
+	ESP_LOGD(TAG, "send_stats len %d uptime %d rx %d tx %d vusb %d vbat %d",
 			sizeof(statistics), statistics.uptime,
-			statistics.packet_rx_count, statistics.packet_tx_count);
+			statistics.packet_rx_count, statistics.packet_tx_count,
+			statistics.placeholder0, statistics.placeholder1);
 
 	reverse_four_bytes(&statistics.uptime);
 	reverse_two_bytes(&statistics.packet_rx_count);
 	reverse_two_bytes(&statistics.packet_tx_count);
+	reverse_two_bytes(&statistics.placeholder0);
+	reverse_two_bytes(&statistics.placeholder1);
 
 	send_bytes((const uint8_t *)&statistics, sizeof(statistics));
 }
@@ -348,10 +358,13 @@ void rfspy_command(const uint8_t *buf, int count, int rssi) {
 static void gnarl_loop(void *unused) {
 	ESP_LOGD(TAG, "starting gnarl_loop");
 	esp_task_wdt_add(0);
-	const int timeout_ms = 60*MILLISECONDS;
+	const int timeout_ms = 20*MILLISECONDS;
 	for (;;) {
 		rfspy_request_t req;
 		if (!xQueueReceive(request_queue, &req, pdMS_TO_TICKS(timeout_ms))) {
+			vusb = voltage_usb();
+			vbat = voltage_bat();
+			ESP_LOGI(TAG, "Read voltages, vusb %d, vbat %d", vusb, vbat);
 			continue;
 		}
 		esp_task_wdt_reset();
